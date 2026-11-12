@@ -16,6 +16,7 @@ feat = [f for f in countries['features'] if f['properties'].get('ISO3166-1-Alpha
 if not feat: sys.exit('no country ' + iso)
 land = shape(feat[0]['geometry']).buffer(0)
 os.makedirs(out, exist_ok=True)
+REG = f'{out}/_region.geojson'
 
 def size_mb(geom):
     p = f'{out}/_region.geojson'
@@ -43,7 +44,11 @@ index = []
 for i, (g, mb, b) in enumerate(pieces, 1):
     name = f'{iso.lower()}-{i:02d}.pmtiles'
     json.dump(mapping(g), open(f'{out}/_region.geojson', 'w'))
-    subprocess.run(['pmtiles', 'extract', planet, f'{out}/{name}', f'--region={out}/_region.geojson', f'--maxzoom={maxzoom}'], check=True, capture_output=True)
+    part = f'{out}/{name}.part'   # a file is only named for real once it is complete, so an interrupted cut never leaves a broken piece
+    subprocess.run(['pmtiles', 'extract', planet, part, f'--region={out}/_region.geojson', f'--maxzoom={maxzoom}'], check=True, capture_output=True)
+    chk = subprocess.run(['pmtiles', 'show', part], capture_output=True, text=True)
+    if 'spec version' not in chk.stdout: sys.exit('broken piece ' + name)
+    os.replace(part, f'{out}/{name}')
     size = os.path.getsize(f'{out}/{name}')
     index.append({'file': name, 'bbox': [round(v, 5) for v in g.bounds], 'bytes': size})
     print('  wrote', name, round(size / 1e6), 'MB', flush=True)
