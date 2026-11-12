@@ -41,17 +41,31 @@ split(box(*land.bounds))
 print(f'{iso}: {len(pieces)} pieces, about {sum(p[1] for p in pieces):.0f} MB')
 if dry: sys.exit(0)
 index = []
-for i, (g, mb, b) in enumerate(pieces, 1):
-    name = f'{iso.lower()}-{i:02d}.pmtiles'
-    json.dump(mapping(g), open(f'{out}/_region.geojson', 'w'))
+HARD_MB = 95   # the real file can come out larger than the estimate: a piece over this is halved and cut again
+n = 0
+def cut_piece(g):
+    global n
+    json.dump(mapping(g), open(REG, 'w'))
+    n += 1; name = f'{iso.lower()}-{n:02d}.pmtiles'
     part = f'{out}/{name}.part'   # a file is only named for real once it is complete, so an interrupted cut never leaves a broken piece
-    subprocess.run(['pmtiles', 'extract', planet, part, f'--region={out}/_region.geojson', f'--maxzoom={maxzoom}'], check=True, capture_output=True)
+    subprocess.run(['pmtiles', 'extract', planet, part, f'--region={REG}', f'--maxzoom={maxzoom}'], check=True, capture_output=True)
     chk = subprocess.run(['pmtiles', 'show', part], capture_output=True, text=True)
     if 'spec version' not in chk.stdout: sys.exit('broken piece ' + name)
+    size = os.path.getsize(part)
+    if size > HARD_MB * 1e6 and (g.bounds[2] - g.bounds[0] > 0.02 or g.bounds[3] - g.bounds[1] > 0.02):
+        os.remove(part); n -= 1
+        x0, y0, x1, y1 = g.bounds
+        if (x1 - x0) >= (y1 - y0): m = (x0 + x1) / 2; halves = [box(x0, y0, m, y1), box(m, y0, x1, y1)]
+        else: m = (y0 + y1) / 2; halves = [box(x0, y0, x1, m), box(x0, m, x1, y1)]
+        print(f'  {name} came out {size / 1e6:.0f} MB, halving', flush=True)
+        for h in halves:
+            hg = g.intersection(h)
+            if not hg.is_empty and hg.area > 1e-8: cut_piece(hg)
+        return
     os.replace(part, f'{out}/{name}')
-    size = os.path.getsize(f'{out}/{name}')
     index.append({'file': name, 'bbox': [round(v, 5) for v in g.bounds], 'bytes': size})
     print('  wrote', name, round(size / 1e6), 'MB', flush=True)
+for g, mb, b in pieces: cut_piece(g)
 json.dump({'iso': iso, 'maxzoom': maxzoom, 'files': index}, open(f'{out}/{iso.lower()}.json', 'w'), indent=1)
 for f in (f'{out}/_region.geojson', f'{out}/_x.pmtiles'):
     if os.path.exists(f): os.remove(f)
